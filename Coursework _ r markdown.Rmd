@@ -1,0 +1,1587 @@
+---
+title: "ST 3189 Course work"
+output: html_notebook
+---
+
+Research question 1 & 2 Data set : <https://archive.ics.uci.edu/dataset/468/online+shoppers+purchasing+intention+dataset>
+
+```{r}
+options(scipen = 999)
+library(dplyr)
+
+```
+
+```{r}
+osi.data <- read.csv("online_shoppers_intention.csv")
+
+# Convert categorical variables to factors
+osi.data <- mutate_if(osi.data, is.character, as.factor)
+osi.data$OperatingSystems <- as.factor(osi.data$OperatingSystems)
+osi.data$Browser <- as.factor(osi.data$Browser)
+osi.data$Region <- as.factor(osi.data$Region)
+osi.data$TrafficType <- as.factor(osi.data$TrafficType)
+osi.data$Weekend <- as.factor(osi.data$Weekend)
+osi.data$Revenue <- as.factor(osi.data$Revenue)
+
+
+```
+
+```{r}
+## K means clustering
+#creating a data set split with only columns needed for k means 
+osi.data_k_means <- osi.data[,c("PageValues","BounceRates","Administrative_Duration","ProductRelated_Duration","Informational_Duration")]
+osi.data_k_means_scaled <- scale(osi.data_k_means)
+
+#k means clustering with 3 clusters 
+km.out=kmeans(osi.data_k_means_scaled,centers=3,nstart=20)
+#summary(km.out)
+# Appending clusters to Base data set 
+#osi.data_k_means$cluster = as.factor(km.out$cluster)
+
+centroids <- as.data.frame(km.out$centers) # identifying centroids of clusters
+
+cluster_names <- ifelse(centroids$BounceRates  > 0.5, "High Bounce rate", 
+                        ifelse(centroids$ProductRelated_Duration  > 0.5, "High Engagement", 
+                               "Normal")) # naming clusters based on bounce rates and durations 
+osi.data_k_means$Cluster_Label <- as.factor(cluster_names[km.out$cluster]) # convert cluster names into factors and map
+osi.data$Cluster_Label <- as.factor(cluster_names[km.out$cluster])
+
+cluster_colors  <- c("maroon3","green3","black" )  # Define colors for each level of the factor variable
+col_vector <- cluster_colors[osi.data_k_means$Cluster_Label]
+#table(osi.data_k_means$Cluster_Label,col_vector ) # check colors mapped
+
+#plot pair plot across clustering variables
+pairs(osi.data_k_means[, -6], col = col_vector, pch = 20)
+
+
+```
+
+```{r}
+#build confusion matrix across clusters and all Dataset variables 
+# Load the forcats package
+library(forcats)
+
+# Group the lower levels of the browser factor into one group
+osi.data$Browser <- fct_lump_prop(osi.data$Browser, prop = 0.03, other_level = "Other")
+osi.data$TrafficType <- fct_lump_prop(osi.data$TrafficType, prop = 0.03, other_level = "Other")
+osi.data$OperatingSystems <- fct_lump_prop(osi.data$OperatingSystems, prop = 0.03, other_level = "Other")
+
+
+factor_columns <- osi.data[, sapply(osi.data, is.factor)]
+factor_columns <- factor_columns[,-9]
+factor_columns <- factor_columns[,-8]
+
+par(mfrow=c(2, 5))  
+
+library(reshape2)
+library(ggplot2)
+
+# Loop through each factor column
+for (col in names(factor_columns)) {
+  # Compute the confusion matrix
+  conf_matrix <- prop.table(table(factor_columns[[col]],osi.data$Cluster_Label), 1)
+  
+  # Convert the confusion matrix to a data frame
+  conf_matrix_df <- as.data.frame.table(conf_matrix)
+  conf_matrix_df <- melt(conf_matrix_df)
+  
+  # Plot the confusion matrix with color-coded entries
+  plot_title <- paste("Confusion Matrix for", col)
+  p<- ggplot(conf_matrix_df, aes(x = Var1, y = Var2, fill = value)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = paste0(round(value * 100, 2), "%")), vjust = 1) +
+    scale_fill_gradient(low = "white", high = "steelblue") +
+    labs(x = "Cluster", y = col, title = plot_title) +
+    theme_minimal()
+  print(p)
+}
+
+```
+
+```{r}
+########################### Classification problem 
+#reuploading data set 
+osi.data <- read.csv("online_shoppers_intention.csv")
+
+# Convert categorical variables to factors
+library(tidyverse)
+
+osi.data <- mutate_if(osi.data, is.character, as.factor)
+osi.data$OperatingSystems <- as.factor(osi.data$OperatingSystems)
+osi.data$Browser <- as.factor(osi.data$Browser)
+osi.data$Region <- as.factor(osi.data$Region)
+osi.data$TrafficType <- as.factor(osi.data$TrafficType)
+osi.data$Weekend <- as.factor(osi.data$Weekend)
+osi.data$Revenue <- as.factor(osi.data$Revenue)
+
+```
+
+```{r}
+# Comparing features with Revenue
+par(mfrow=c(2, 2))  
+revenue_colors <- c("green4", "tomato3")
+
+for (col in names(osi.data)) {
+  if (col != "Revenue") {  # Exclude the revenue column
+    boxplot(osi.data[[col]] ~ osi.data$Revenue, 
+            main = paste("Boxplot of", col, "by Revenue"),
+            xlab = "Revenue", ylab = col,
+            col = revenue_colors)
+  }
+}
+```
+
+```{r}
+############# Statistical significance of columns 
+library(caret)
+
+osi.balanced_data <- downSample(x = osi.data[, -which(names(osi.data) == "Revenue")], y = osi.data$Revenue)
+osi.balanced_data$Revenue <- osi.balanced_data$Class
+osi.balanced_data <- subset(osi.balanced_data, select = -Class)
+
+## continous variables 
+results <- lapply(names(osi.balanced_data)[sapply(osi.balanced_data, is.numeric)], function(var) {
+  t_test_result <- t.test(osi.balanced_data[osi.balanced_data$Revenue == "TRUE", var], 
+                          osi.balanced_data[osi.balanced_data$Revenue == "FALSE", var])
+  data.frame(Variable = var,
+             Mean_True = round(mean(osi.balanced_data[osi.balanced_data$Revenue == "TRUE", var]),2),
+             Mean_False = round(mean(osi.balanced_data[osi.balanced_data$Revenue == "FALSE", var]),2),
+             P_Value = round(t_test_result$p.value,5),
+             stringsAsFactors = FALSE)
+})
+
+result_df <- do.call(rbind, results)
+result_df <- result_df[order(result_df$P_Value), ]
+result_df
+```
+
+```{r}
+# categorical variables 
+# chisquare test 
+results <- lapply(names(osi.balanced_data)[sapply(osi.balanced_data, is.factor)], function(var) {
+  contingency_table <- table(osi.balanced_data$Revenue, osi.balanced_data[[var]])
+  chi_square_result <- chisq.test(contingency_table)
+  data.frame(Variable = var,
+             Chi_Square_Statistic = round(chi_square_result$statistic,2),
+             P_Value = round(chi_square_result$p.value,4),
+             stringsAsFactors = FALSE)
+})
+
+result_df <- do.call(rbind, results)
+result_df <- result_df[order(result_df$P_Value), ]
+result_df
+```
+
+```{r}
+# fisher test 
+results <- lapply(names(osi.data)[sapply(osi.data, is.factor)], function(var) {
+  contingency_table <- table(osi.data$Revenue, osi.data[[var]])
+  fisher_test_result <- fisher.test(contingency_table, simulate.p.value = TRUE, B = 10000)
+  data.frame(Variable = var,
+             P_Value = round(fisher_test_result$p.value,4),
+             stringsAsFactors = FALSE)
+})
+
+result_df <- do.call(rbind, results)
+result_df <- result_df[order(result_df$P_Value), ]
+result_df
+
+################################
+```
+
+```{r}
+### Mutual Information Calculation 
+library(FSelector) # used for function mutinformation
+library(infotheo)# used for function mutinformation
+
+# Function to discretize a numerical variable into 5 buckets
+discretize_into_buckets <- function(x) {
+  cut(x, breaks = 5)
+}
+
+# Discretize numerical variables into 5 buckets
+numerical_vars <- sapply(osi.data, is.numeric)
+osi.data_discretized <- osi.data
+osi.data_discretized[, numerical_vars] <- lapply(osi.data_discretized[, numerical_vars], discretize_into_buckets)
+
+library(forcats) #used for function fct_lump_prop
+
+# Group the lower levels of the factor variables into one group
+osi.data$Browser <- fct_lump_prop(osi.data$Browser, prop = 0.03, other_level = "Other")
+osi.data$TrafficType <- fct_lump_prop(osi.data$TrafficType, prop = 0.03, other_level = "Other")
+osi.data$OperatingSystems <- fct_lump_prop(osi.data$OperatingSystems, prop = 0.03, other_level = "Other")
+
+# Calculate mutual information for each variable with the revenue column
+mut_info <- sapply(names(osi.data_discretized[,-18]), function(var) {
+  mutinformation(osi.data_discretized[[var]], osi.data_discretized$Revenue)
+})
+
+# Display the mutual information values
+mut_info<-data.frame(mut_info)
+  #data.frame(Variable = names(mut_info), MI = mut_info)
+mut_info[order(mut_info$mut_info, decreasing = TRUE),]
+```
+
+```{r}
+osi.data_classification <- osi.data_discretized[,c("ExitRates", "PageValues","TrafficType" ,"Month","Administrative" , "VisitorType", "SpecialDay" ,"ProductRelated","OperatingSystems", "Browser", "Weekend","Region","Revenue")]
+
+```
+
+```{r}
+##### logistic regression - Base model 
+
+library(ISLR)
+
+set.seed(123)
+
+library(caTools)
+library(pROC)
+library(MLmetrics)
+library(caret)
+
+classification.m1 = glm(Revenue~.,data=osi.data_classification,family=binomial)
+summary(classification.m1)
+```
+
+```{r}
+classification.m2 = glm(Revenue~ . -Weekend -Browser -Region -OperatingSystems,data=osi.data_classification,family=binomial)
+summary(classification.m2)
+```
+
+```{r}
+classification.m2.probs = predict (classification.m2 ,type ="response")
+classification.m2.pred_binary <- ifelse(classification.m2.probs > 0.5, 1, 0)
+
+#AUC value 
+classification.m2.auc_score <- auc(roc(as.integer(osi.data_classification$Revenue)-1, classification.m2.pred_binary))
+
+#F1 Score 
+classification.m2.f1_score <- F1_Score(as.integer(osi.data_classification$Revenue)-1, classification.m2.pred_binary)
+
+#Confusion_matrix
+classification.m2.conf_mat <- confusionMatrix(as.factor(classification.m2.pred_binary), as.factor(as.integer(osi.data_classification$Revenue)-1))
+classification.m2.sensitivity <- classification.m2.conf_mat$byClass["Sensitivity"]
+classification.m2.specificity <- classification.m2.conf_mat$byClass["Specificity"]
+
+# Calculate accuracy
+classification.m2.accuracy <- classification.m2.conf_mat$overall["Accuracy"]
+
+# Print the evaluation metrics
+cat("Model 2 Metrics:\n",
+    "AUC:", classification.m2.auc_score, "\n",
+    "F1 Score:", classification.m2.f1_score, "\n",
+    "Sensitivity:", classification.m2.sensitivity, "\n",
+    "Specificity:", classification.m2.specificity, "\n",
+    "Accuracy:", classification.m2.accuracy, "\n\n")
+```
+
+```{r}
+
+#Removing insignificant features
+osi.data_classification <- osi.data_discretized[,c("ExitRates", "PageValues","TrafficType" ,"Month","Administrative" , "VisitorType", "SpecialDay" ,"ProductRelated","Revenue")]
+
+#dividing dataset into train and test 
+osi.data_classification.train <- sample.split(Y = osi.data_classification$Revenue, SplitRatio = 0.7)
+osi.data_classification.trainset <- subset(osi.data_classification, osi.data_classification.train == T)
+osi.data_classification.testset <- subset(osi.data_classification, osi.data_classification.train == F)
+
+```
+
+```{r}
+# CART using rpart
+library(rpart)
+library(rpart.plot)	
+
+classification.m3 <- rpart(Revenue ~ . , data = osi.data_classification.trainset, method = 'class', cp = 0) # printing maximum possible tree to get list of cp 
+rpart.plot(classification.m3, nn = T, main = "Maximal Tree in m3")
+#print(classification.m3)
+
+```
+
+```{r}
+# Effects of Cost Complexity Pruning at important cp values.
+printcp(classification.m3, digits = 3)
+```
+
+```{r}
+
+# Plot CV error vs cp values
+plotcp(classification.m3)
+
+```
+
+```{r}
+cp.min <- classification.m3$cptable[which.min(classification.m3$cptable[,"xerror"]),"CP"]
+cp.min
+
+cp.opt1 <- 0.002245509
+cp.opt2 <- 0.001123            
+cp.opt3 <- 0.001048 
+
+#Prune the max tree m2 using a particular CP value (i.e. a specified penalty cost for model complexity)
+classification.m4 <- prune(classification.m3, cp = cp.min)
+print(classification.m4)
+```
+
+```{r}
+
+printcp(classification.m4, digits = 3)
+## --- Trainset Error & CV Error --------------------------
+## Root node error: 1336/8631 = 0.155
+## m4 trainset error = 0.931 * 0.155 = 0.144305 = 14.4%
+## m4 CV error = CV error = 0.931 * 0.433 = 0.403 = 40.3%
+
+rpart.plot(classification.m4, nn = T, main = "Optimal Tree in m3 with 1 Split")
+```
+
+```{r}
+#Going with opt2 because the mincp tree is very simple
+classification.m5 <- prune(classification.m3, cp = 0.001497 , nsplit = 6)
+summary(classification.m5)
+
+```
+
+```{r}
+rpart.plot(classification.m5, nn = T, main = "Optimal Tree in CART with 9 Split")
+
+```
+
+```{r}
+
+classification.m4.pred_binary <- predict(classification.m4, newdata = osi.data_classification.testset, type='class')
+classification.m5.pred_binary <- predict(classification.m5, newdata = osi.data_classification.testset, type='class')
+
+data.frame(classification.m5$variable.importance)
+
+
+```
+
+```{r}
+options(digits = 3)
+
+#AUC value 
+classification.m4.auc_score <- auc(roc(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m4.pred_binary)))
+classification.m5.auc_score <- auc(roc(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m5.pred_binary)))
+
+#F1 Score 
+classification.m4.f1_score <- F1_Score(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m4.pred_binary)-1)
+classification.m5.f1_score <- F1_Score(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m5.pred_binary)-1)
+
+#Confusion_matrix
+classification.m4.conf_mat <- confusionMatrix(as.factor(classification.m4.pred_binary),osi.data_classification.testset$Revenue)
+classification.m4.sensitivity <- classification.m4.conf_mat$byClass["Sensitivity"]
+classification.m4.specificity <- classification.m4.conf_mat$byClass["Specificity"]
+classification.m5.conf_mat <- confusionMatrix(as.factor(classification.m5.pred_binary),osi.data_classification.testset$Revenue)
+classification.m5.sensitivity <- classification.m5.conf_mat$byClass["Sensitivity"]
+classification.m5.specificity <- classification.m5.conf_mat$byClass["Specificity"]
+
+# Calculate accuracy
+classification.m4.accuracy <- classification.m4.conf_mat$overall["Accuracy"]
+classification.m5.accuracy <- classification.m4.conf_mat$overall["Accuracy"]
+
+
+# Print the evaluation metrics
+cat("Model 4 Metrics:\n",
+    "AUC:", classification.m4.auc_score, "\n",
+    "F1 Score:", classification.m4.f1_score, "\n",
+    "Sensitivity:", classification.m4.sensitivity, "\n",
+    "Specificity:", classification.m4.specificity, "\n",
+    "Accuracy:", classification.m4.accuracy, "\n\n")
+
+cat("Model 5 Metrics:\n",
+    "AUC:", classification.m5.auc_score, "\n",
+    "F1 Score:", classification.m5.f1_score, "\n",
+    "Sensitivity:", classification.m5.sensitivity, "\n",
+    "Specificity:", classification.m5.specificity, "\n",
+    "Accuracy:", classification.m5.accuracy, "\n\n")
+
+
+
+```
+
+```{r}
+# Random forest with 5 fold cross validation 
+library(MLmetrics)
+library(caret)
+library(doSNOW)
+
+
+#defining perfromance metric 
+f1 <- function(data, lev = NULL, model = NULL) {
+        f1_val <- MLmetrics::F1_Score(y_pred = data$pred,
+                                      y_true = data$obs,
+                                      positive = lev[1])
+        c(F1 = f1_val)
+}
+
+
+train.control <- trainControl(method = "repeatedcv",
+                              number = 5,
+                              repeats = 3,
+                              classProbs = TRUE,
+                              summaryFunction = f1,
+                              search = "grid")
+
+
+tune.grid <- expand.grid(.mtry = seq(from = 1, to = 10, by = 1))
+
+osi.data_classification.trainset$Revenue <- make.names(osi.data_classification.trainset$Revenue)
+
+cl <- makeCluster(3, type = "SOCK")
+registerDoSNOW(cl)
+random.forest.orig <- train(Revenue ~ ., 
+                     data = osi.data_classification.trainset,
+                     method = "rf",
+                     tuneGrid = tune.grid,
+                     metric = "F1",
+                     #weights = model_weights,
+                     trControl = train.control)
+stopCluster(cl)
+
+random.forest.orig
+
+```
+
+```{r}
+classification.m6.pred_binary <- predict(random.forest.orig, newdata = osi.data_classification.testset)
+
+varImp(random.forest.orig)
+
+```
+
+```{r}
+#AUC value 
+classification.m6.auc_score <- auc(roc(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m6.pred_binary)))
+
+#F1 Score 
+classification.m6.f1_score <- F1_Score(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m6.pred_binary)-1)
+
+#Confusion_matrix
+classification.m6.conf_mat <- confusionMatrix(as.factor(as.integer(classification.m6.pred_binary)-1),as.factor(as.integer(osi.data_classification.testset$Revenue)-1))
+classification.m6.sensitivity <- classification.m6.conf_mat$byClass["Sensitivity"]
+classification.m6.specificity <- classification.m6.conf_mat$byClass["Specificity"]
+
+# Calculate accuracy
+classification.m6.accuracy <- classification.m6.conf_mat$overall["Accuracy"]
+
+
+# Print the evaluation metrics
+cat("Model 6 Metrics:\n",
+    "AUC:", classification.m6.auc_score, "\n",
+    "F1 Score:", classification.m6.f1_score, "\n",
+    "Sensitivity:", classification.m6.sensitivity, "\n",
+    "Specificity:", classification.m6.specificity, "\n",
+    "Accuracy:", classification.m6.accuracy, "\n\n")
+
+
+
+
+```
+
+```{r}
+# XG Boost 
+library(xgboost)
+
+osi.data_classification.trainset <- subset(osi.data_classification, osi.data_classification.train == T)
+osi.data_classification.testset <- subset(osi.data_classification, osi.data_classification.train == F)
+
+osi.data_classification.trainset$Revenue <- as.integer(osi.data_classification.trainset$Revenue)-1
+osi.data_classification.testset$Revenue <- as.integer(osi.data_classification.testset$Revenue)-1
+
+xgb_model <- xgboost(data = data.matrix(osi.data_classification.trainset[, -which(names(osi.data_classification.trainset) == "Revenue")]),
+                     label = osi.data_classification.trainset[, which(names(osi.data_classification.trainset) == "Revenue")],
+                     booster = "gbtree",  # Gradient boosting tree
+                     objective = "binary:logistic",  # Binary classification
+                     nrounds = 100,  # Number of boosting rounds
+                     max_depth = 6,  # Maximum tree depth
+                     eta = 0.3,  # Learning rate
+                     gamma = 0,  # Minimum loss reduction required to make a further partition
+                     subsample = 1,  # Subsample ratio of the training instances
+                     colsample_bytree = 1)  # Subsample ratio of columns when constructing each tree
+
+classification.m7.predictions <- predict(xgb_model, data.matrix(osi.data_classification.testset[, -which(names(osi.data_classification.testset) == "Revenue")]))
+
+```
+
+```{r}
+library(ROCR)
+classification.m7.pred_obj <- prediction(classification.m7.predictions, osi.data_classification.testset$Revenue)
+
+perf <- performance(classification.m7.pred_obj, "tpr", "fpr")
+auc <- performance(classification.m7.pred_obj, "auc")
+
+plot(perf, main = "ROC Curve", col = "blue", lwd = 2)
+abline(a = 0, b = 1, lty = 2, col = "red")  # Add diagonal line
+legend("bottomright", legend = paste("AUC =", round(as.numeric(auc@y.values), 2)), col = "blue", lwd = 2, bty = "n")
+
+```
+
+```{r}
+
+classification.m7.pred_binary <- ifelse(classification.m7.predictions > 0.2, 1, 0)
+
+#AUC value 
+classification.m7.auc_score <- auc(roc(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m7.pred_binary)))
+
+#F1 Score 
+classification.m7.f1_score <- F1_Score(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m7.pred_binary)-1)
+
+#Confusion_matrix
+classification.m7.conf_mat <- confusionMatrix(as.factor(as.integer(classification.m7.pred_binary)-1),as.factor(as.integer(osi.data_classification.testset$Revenue)-1))
+classification.m7.sensitivity <- classification.m7.conf_mat$byClass["Sensitivity"]
+classification.m7.specificity <- classification.m7.conf_mat$byClass["Specificity"]
+
+# Calculate accuracy
+classification.m7.accuracy <- classification.m7.conf_mat$overall["Accuracy"]
+
+
+# Print the evaluation metrics
+cat("Model 7 Metrics:\n",
+    "AUC:", classification.m7.auc_score, "\n",
+    "F1 Score:", classification.m7.f1_score, "\n",
+    "Sensitivity:", classification.m7.sensitivity, "\n",
+    "Specificity:", classification.m7.specificity, "\n",
+    "Accuracy:", classification.m7.accuracy, "\n\n")
+```
+
+```{r}
+# unused code chunk
+# # Initialize vectors to store evaluation metrics
+# thresholds <- seq(0, 1, by = 0.05)
+# auc_scores <- vector("numeric", length(thresholds))
+# f1_scores <- vector("numeric", length(thresholds))
+# sensitivities <- vector("numeric", length(thresholds))
+# specificities <- vector("numeric", length(thresholds))
+# accuracies <- vector("numeric", length(thresholds))
+# 
+# # Loop through each threshold
+# for (i in seq_along(thresholds)) {
+#     # Predict using the current threshold
+#     classification.m7.pred_binary <- ifelse(classification.m7.predictions > thresholds[i], 1, 0)
+#     
+#     # Calculate AUC
+#     auc_scores[i] <- auc(roc(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m7.pred_binary)))
+#     
+#     # Calculate F1 Score
+#     classification.m7.f1_score <- F1_Score(as.integer(osi.data_classification.testset$Revenue)-1, as.integer(classification.m7.pred_binary)-1)
+#     
+#     # Calculate confusion matrix
+#     classification.m7.conf_mat <- confusionMatrix(as.factor(as.integer(classification.m7.pred_binary)-1),as.factor(as.integer(osi.data_classification.testset$Revenue)-1))
+#     
+#     # Get sensitivity and specificity from confusion matrix
+#     classification.m7.sensitivity <- classification.m7.conf_mat$byClass["Sensitivity"]
+#     classification.m7.specificity <- classification.m7.conf_mat$byClass["Specificity"]
+#     
+#     # Calculate accuracy
+#     classification.m7.accuracy <- classification.m7.conf_mat$overall["Accuracy"]
+#     
+#     # Store evaluation metrics
+#     f1_scores[i] <- classification.m7.f1_score
+#     sensitivities[i] <- classification.m7.sensitivity
+#     specificities[i] <- classification.m7.specificity
+#     accuracies[i] <- classification.m7.accuracy
+# }
+# 
+# # Find the index of the maximum AUC score
+# max_auc_index <- which.max(auc_scores)
+# 
+# # Print the evaluation metrics for the threshold with maximum AUC
+# cat("Optimal Threshold Metrics:\n",
+#     "Threshold:", thresholds[max_auc_index], "\n",
+#     "AUC:", auc_scores[max_auc_index], "\n",
+#     "F1 Score:", f1_scores[max_auc_index], "\n",
+#     "Sensitivity:", sensitivities[max_auc_index], "\n",
+#     "Specificity:", specificities[max_auc_index], "\n",
+#     "Accuracy:", accuracies[max_auc_index], "\n\n")
+
+```
+
+```{r}
+# Undersampling 
+osi.balanced_data <- downSample(x = osi.data_classification[, -which(names(osi.data) == "Revenue")], y = osi.data_classification$Revenue)
+osi.balanced_data$Revenue <- osi.balanced_data$Class
+osi.balanced_data <- subset(osi.balanced_data, select = -Class)
+
+
+#dividing undersampled dataset into train and test 
+osi.balanced_data.train <- sample.split(Y = osi.balanced_data$Revenue, SplitRatio = 0.7)
+osi.balanced_data.trainset <- subset(osi.balanced_data, osi.balanced_data.train == T)
+osi.balanced_data.testset <- subset(osi.balanced_data, osi.balanced_data.train == F)
+
+
+```
+
+```{r}
+# Random forest on undersampled data 
+
+osi.balanced_data.trainset$Revenue <- make.names(osi.balanced_data.trainset$Revenue)
+
+cl <- makeCluster(3, type = "SOCK")
+registerDoSNOW(cl)
+random.forest.undersample <- train(Revenue ~ ., 
+                     data = osi.balanced_data.trainset,
+                     method = "rf",
+                     tuneGrid = tune.grid,
+                     metric = "F1",
+                     trControl = train.control)
+stopCluster(cl)
+
+random.forest.undersample
+
+```
+
+```{r}
+classification.m8.pred_binary <- predict(random.forest.undersample, newdata = osi.balanced_data.testset)
+
+varImp(random.forest.undersample) # Get variable importance from random forest
+```
+
+```{r}
+#AUC value 
+classification.m8.auc_score <- auc(roc(as.integer(osi.balanced_data.testset$Revenue)-1, as.integer(classification.m8.pred_binary)))
+
+#F1 Score 
+classification.m8.f1_score <- F1_Score(as.integer(osi.balanced_data.testset$Revenue)-1, as.integer(classification.m8.pred_binary)-1)
+
+#Confusion_matrix
+classification.m8.conf_mat <- confusionMatrix(as.factor(as.integer(classification.m8.pred_binary)-1),as.factor(as.integer(osi.balanced_data.testset$Revenue)-1))
+classification.m8.sensitivity <- classification.m8.conf_mat$byClass["Sensitivity"]
+classification.m8.specificity <- classification.m8.conf_mat$byClass["Specificity"]
+
+# Calculate accuracy
+classification.m8.accuracy <- classification.m8.conf_mat$overall["Accuracy"]
+
+
+# Print the evaluation metrics
+cat("Model 8 Metrics:\n",
+    "AUC:", classification.m8.auc_score, "\n",
+    "F1 Score:", classification.m8.f1_score, "\n",
+    "Sensitivity:", classification.m8.sensitivity, "\n",
+    "Specificity:", classification.m8.specificity, "\n",
+    "Accuracy:", classification.m8.accuracy, "\n\n")
+
+
+```
+
+```{r}
+# XG boost on undersampled data 
+
+osi.balanced_data.trainset <- subset(osi.balanced_data, osi.balanced_data.train == T)
+osi.balanced_data.testset <- subset(osi.balanced_data, osi.balanced_data.train == F)
+
+osi.balanced_data.trainset$Revenue <- as.integer(osi.balanced_data.trainset$Revenue)-1
+osi.balanced_data.testset$Revenue <- as.integer(osi.balanced_data.testset$Revenue)-1
+
+xgb_model_downsample <- xgboost(data = data.matrix(osi.balanced_data.trainset[, -which(names(osi.balanced_data.trainset) == "Revenue")]),
+                     label = osi.balanced_data.trainset[, which(names(osi.balanced_data.trainset) == "Revenue")],
+                     booster = "gbtree",  # Gradient boosting tree
+                     objective = "binary:logistic",  # Binary classification
+                     nrounds = 100,  # Number of boosting rounds
+                     max_depth = 6,  # Maximum tree depth
+                     eta = 0.3,  # Learning rate
+                     gamma = 0,  # Minimum loss reduction required to make a further partition
+                     subsample = 1,  # Subsample ratio of the training instances
+                     colsample_bytree = 1)  # Subsample ratio of columns when constructing each tree
+
+classification.m9.predictions <- predict(xgb_model_downsample, data.matrix(osi.balanced_data.trainset[, -which(names(osi.balanced_data.trainset) == "Revenue")]))
+
+
+```
+
+```{r}
+classification.m9.pred_obj <- prediction(classification.m9.predictions, osi.balanced_data.trainset$Revenue)
+
+perf_undersample <- performance(classification.m9.pred_obj, "tpr", "fpr")
+auc_undersample <- performance(classification.m9.pred_obj, "auc")
+
+plot(perf_undersample, main = "ROC Curve", col = "blue", lwd = 2)
+abline(a = 0, b = 1, lty = 2, col = "red")  # Add diagonal line
+legend("bottomright", legend = paste("AUC =", round(as.numeric(auc_undersample@y.values), 2)), col = "blue", lwd = 2, bty = "n")
+
+```
+
+```{r}
+classification.m9.pred_binary <- ifelse(classification.m9.predictions > 0.55, 1, 0)
+
+#AUC value 
+classification.m9.auc_score <- auc(roc(as.integer(osi.balanced_data.trainset$Revenue)-1, as.integer(classification.m9.pred_binary)))
+
+#F1 Score 
+classification.m9.f1_score <- F1_Score(as.integer(osi.balanced_data.trainset$Revenue)-1, as.integer(classification.m9.pred_binary)-1)
+
+#Confusion_matrix
+classification.m9.conf_mat <- confusionMatrix(as.factor(as.integer(classification.m9.pred_binary)-1),as.factor(as.integer(osi.balanced_data.trainset$Revenue)-1))
+classification.m9.sensitivity <- classification.m9.conf_mat$byClass["Sensitivity"]
+classification.m9.specificity <- classification.m9.conf_mat$byClass["Specificity"]
+
+# Calculate accuracy
+classification.m9.accuracy <- classification.m9.conf_mat$overall["Accuracy"]
+
+
+# Print the evaluation metrics
+cat("Model 9 Metrics:\n",
+    "AUC:", classification.m9.auc_score, "\n",
+    "F1 Score:", classification.m9.f1_score, "\n",
+    "Sensitivity:", classification.m9.sensitivity, "\n",
+    "Specificity:", classification.m9.specificity, "\n",
+    "Accuracy:", classification.m9.accuracy, "\n\n")
+```
+
+```{r}
+# List of models
+models <- c("Logistic - Base model", "CART - 1 split", "CART - Optimum split", "Random Forest - 5 CV", "XG Boost", "Random Forest - 5 CV - undersample", "XG Boost - undersample")
+
+# List of metrics for each model
+metrics <- list(
+  AUC = c(classification.m2.auc_score, classification.m4.auc_score, classification.m5.auc_score, classification.m6.auc_score, classification.m7.auc_score, classification.m8.auc_score, classification.m9.auc_score),
+  F1_Score = c(classification.m2.f1_score, classification.m4.f1_score, classification.m5.f1_score, classification.m6.f1_score, classification.m7.f1_score, classification.m8.f1_score, classification.m9.f1_score),
+  Sensitivity = c(classification.m2.sensitivity, classification.m4.sensitivity, classification.m5.sensitivity, classification.m6.sensitivity, classification.m7.sensitivity, classification.m8.sensitivity, classification.m9.sensitivity),
+  Specificity = c(classification.m2.specificity, classification.m4.specificity, classification.m5.specificity, classification.m6.specificity, classification.m7.specificity, classification.m8.specificity, classification.m9.specificity),
+  Accuracy = c(classification.m2.accuracy, classification.m4.accuracy, classification.m5.accuracy, classification.m6.accuracy, classification.m7.accuracy, classification.m8.accuracy, classification.m9.accuracy) * 100  # Convert accuracy to percentage
+)
+
+# Create dataframe
+metrics_df <- data.frame(Model = models, metrics)
+
+# Print dataframe
+print(metrics_df[!metrics_df$Model %in% c("XG Boost - undersample", "Random Forest - 5 CV - undersample"), ])
+
+
+```
+
+```{r}
+print(metrics_df[metrics_df$Model %in% c("XG Boost - undersample", "Random Forest - 5 CV - undersample"), ])
+```
+
+```{r}
+xgb.importance(model = xgb_model_downsample)
+```
+
+```{r}
+varImp(random.forest.undersample)
+
+```
+
+Research Question 3
+
+Data set link - <https://www.openml.org/search?type=data&sort=runs&id=41211&status=active> No missing values
+
+```{r}
+# data set is an arff file and hence initiating RWeka library
+library(RWeka)
+ames=read.arff("file2ed11cebe25.arff")
+
+set.seed(123)
+
+options(scipen = 999)
+
+```
+
+```{r}
+# ordering the column names alphabetically for easy reading 
+ames <- ames[,order(names(ames))]
+
+#seperating categorical and continuous variables
+library(caret)
+library(tidyverse)
+library(MASS)
+library(dplyr)
+
+categorical_vars <-  ames %>%
+  dplyr::select(-Sale_Price) %>%
+  keep(~ !is.numeric(.)) %>%
+  names()
+
+as.data.frame(summary(ames[,categorical_vars]))
+```
+
+```{r}
+#Data cleaning 
+#write.csv(as.data.frame(summary(ames[,categorical_vars])), "for cleaning.csv", row.names = FALSE)
+
+#month sold is categorical 
+ames$Mo_Sold <- as.factor(ames$Mo_Sold)
+
+# converting ordinal categorical variables into factors 
+# makes typical as 0 as avg 
+ames$Bsmt_Cond <- as.integer(factor(ames$Bsmt_Cond, levels = c("No_Basement", "Poor", "Typical", "Good", "Fair", "Excellent")))-3 
+# makes typical as 0 as avg 
+ames$Bsmt_Exposure <- as.integer(factor(ames$Bsmt_Exposure, levels = c("No_Basement", "No", "Av", "Gd", "Mn")))-3 
+ames$Bsmt_Qual <- as.integer(factor(ames$Bsmt_Qual, levels = c("No_Basement", "Poor", "Typical", "Good", "Fair", "Excellent")))-3
+ames$Exter_Cond <- as.integer(factor(ames$Exter_Cond, levels = c("Poor", "Typical", "Good", "Fair", "Excellent")))-3
+ames$Exter_Qual <- as.integer(factor(ames$Exter_Qual, levels = c("Typical", "Good", "Fair", "Excellent")))-1
+ames$Fireplace_Qu <- as.integer(factor(ames$Fireplace_Qu, levels = c("No_Fireplace", "Poor", "Typical", "Good", "Fair", "Excellent")))-3
+ames$Garage_Cond <- as.integer(factor(ames$Garage_Cond, levels = c("No_Garage", "Poor", "Typical", "Good", "Fair", "Excellent")))-3
+ames$Garage_Qual <- as.integer(factor(ames$Garage_Qual, levels = c("Poor", "No_Garage", "Typical", "Good", "Fair", "Excellent")))-2
+ames$Heating_QC <- as.integer(factor(ames$Heating_QC, levels = c("Poor", "Typical", "Good", "Fair", "Excellent")))-2
+ames$Kitchen_Qual <- as.integer(factor(ames$Kitchen_Qual, levels = c("Poor", "Typical", "Good", "Fair", "Excellent")))-2
+ames$Lot_Shape <- as.integer(factor(ames$Lot_Shape, levels = c("Regular", "Slightly_Irregular", "Moderately_Irregular")))-1
+#ames$MS_Zoning <- as.integer(factor(ames$MS_Zoning, levels = c("Floating_Village_Residential", "Residential_Low_Density", "Residential_Medium_Density", "Residential_High_Density")))-1
+ames$Overall_Cond <- as.integer(factor(ames$Overall_Cond, levels = c("Below_Average", "Average", "(Other)", "Above_Average", "Good", "Very_Good", "Fair")))-2
+ames$Overall_Qual <- as.integer(factor(ames$Overall_Qual, levels = c("Below_Average", "Average", "(Other)", "Above_Average", "Good", "Very_Good", "Excellent")))-2
+ames$Paved_Drive <- as.integer(factor(ames$Paved_Drive, levels = c("Dirt_Gravel", "Partial_Pavement", "Paved")))-1
+ames$Pool_QC <- as.integer(factor(ames$Pool_QC, levels = c("No_Pool", "Typical", "Good", "Fair", "Excellent")))-1
+ames$Street <- as.integer(factor(ames$Street, levels = c("Grvl", "Pave")))-1
+ames$Land_Slope <- as.integer(factor(ames$Land_Slope, levels = c("Gtl","Mod","Sev")))-1
+
+## Fill NA Values and merge some columns
+## some values has NA Values after assigning integers 
+levels(ames$MS_Zoning) <- c(levels(ames$MS_Zoning), "Other")
+
+ames[ames$MS_Zoning=="A_agr",]$MS_Zoning <- "Other" # converting small groups into other 
+ames[ames$MS_Zoning=="C_all",]$MS_Zoning <- "Other"
+ames[ames$MS_Zoning=="I_all",]$MS_Zoning <- "Other"
+
+ames$Lot_Shape[is.na(ames$Lot_Shape)] <- 2 #converting irregular to moderately irregular 
+
+ames$Overall_Cond[is.na(ames$Overall_Cond)] <- 0 #filling others with avg
+ames$Overall_Qual[is.na(ames$Overall_Qual)] <- 0 #filling others with avg
+
+ames[ames$Lot_Config=="FR3",]$Lot_Config <- "FR2"
+ames[ames$Roof_Style=="Mansard",]$Roof_Style <- "Gambrel"
+
+ames[ames$Mas_Vnr_Type=="BrkCmn",]$Mas_Vnr_Type <- "BrkFace"
+ames[ames$Mas_Vnr_Type=="CBlock",]$Mas_Vnr_Type <- "BrkFace"
+
+levels(ames$Foundation) <- c(levels(ames$Foundation), "Other")
+ames[ames$Foundation=="Slab",]$Foundation <- "Other"
+ames[ames$Foundation=="Stone",]$Foundation <- "Other"
+ames[ames$Foundation=="Wood",]$Foundation <- "Other"
+
+ames[ames$Functional=="Maj2",]$Functional <- "Maj1"
+
+ames[ames$Electrical=="FuseP",]$Electrical <- "FuseF"
+ames[ames$Electrical=="Mix",]$Electrical <- "FuseF"
+
+
+```
+
+```{r}
+#since the number of features are huge we deploy feature engineering methods 
+continuous_vars <- ames %>%
+  #select(-Sale_Price) %>%
+  keep(is.numeric) %>%
+  names()
+
+
+# correlation 
+correlation_matrix <- cor(ames[,continuous_vars])
+
+library(reshape2)
+
+# Melt correlation matrix
+melted_corr <- melt(correlation_matrix)
+
+melted_corr[order(melted_corr$value),] # least negative cor is -0.48
+melted_corr_ordered <- melted_corr[order(melted_corr$value, decreasing = TRUE), ]
+melted_corr_ordered <- subset(melted_corr_ordered, Var1 != Var2)
+subset(melted_corr_ordered, Var1 == "Sale_Price")
+
+melted_corr_ordered <- melted_corr_ordered %>% 
+                       left_join( subset(melted_corr_ordered, Var1 == "Sale_Price"),    by=c('Var2'))
+
+melted_corr_ordered <- melted_corr_ordered %>% 
+                       left_join( subset(melted_corr_ordered, Var2 == "Sale_Price"),    by=c("Var1.x" ))
+
+melted_corr_ordered <- melted_corr_ordered[,c("Var1.x","Var2.x","value.x.x","value.y.x","value.x.y")]
+
+colnames(melted_corr_ordered) <- c("Var1", "Var2", "Correlation_Var1_Var2", "Correlation_Var2_SalePrice", "Correlation_Var1_SalePrice")
+
+as.data.frame(melted_corr_ordered)
+
+melted_corr_ordered[melted_corr_ordered$Correlation_Var1_Var2 > 0.75 & melted_corr_ordered$Correlation_Var1_SalePrice < melted_corr_ordered$Correlation_Var2_SalePrice, ]
+
+## removing columns which are highly correlated with other variables and are slightly lowly correlated with saleprice 
+columns_to_remove <- c("Garage_Area","Fireplaces","	Pool_Area","TotRms_AbvGrd","First_Flr_SF")
+
+ames <- ames[, -which(names(ames) %in% columns_to_remove)]
+
+subset(melted_corr_ordered, Var1 == "Sale_Price")
+
+
+```
+
+```{r}
+# #Creating dummy variables for Nominal categorical variables 
+# ames[,c("Alley","Bldg_Type","BsmtFin_Type_1","BsmtFin_Type_2","Central_Air","Condition_1","Condition_2","Electrical","Exterior_1st","Exterior_2nd","Fence","Foundation","Functional","Garage_Finish","Garage_Type","Heating","House_Style","Land_Contour","Land_Slope","Lot_Config","Mas_Vnr_Type","Misc_Feature","MS_SubClass","MS_Zoning","Neighborhood","Roof_Matl","Roof_Style","Sale_Condition","Sale_Type","Utilities")]
+# 
+# dummy_data <- dummyVars(~., data = ames)
+# ames.data_dummy <- predict(dummy_data, newdata = ames)
+# ames.data_dummy <- as.data.frame(ames.data_dummy)
+```
+
+```{r}
+#Checking Sale price wrt some obvious indicators 
+library(ggplot2)
+
+#selecting only normal sale conditions as prices will be different for partital , family etc. 
+ames <- ames[ames$Sale_Condition== 'Normal',]
+
+# Categorical variables 
+categorical_vars <- ames %>%
+  #select(-Sale_Price) %>%
+  keep(~ !is.numeric(.)) %>%
+  names()
+
+# Create a boxplot
+for (var in categorical_vars) {
+  # Create a boxplot
+  plot <- ggplot(ames, aes_string(x = var, y = "Sale_Price")) +
+    geom_boxplot() +
+    labs(x = var, y = "Sale Price") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  # Print the boxplot
+  print(plot)
+}
+```
+
+```{r}
+#Combining some features based on the box plots 
+ames[ames$Heating=="GasW",]$Heating <- "GasA"
+
+#Removing MS_SubClass as its a combination of house type, bulding type and year
+ames <- ames[, -which(names(ames) == "MS_SubClass")]
+
+#Removing since it has only 1 level
+ames <- ames[, -which(names(ames) == "Sale_Condition")]
+
+#removing functional and Fence as it is not creating much variation in sale price 
+ames <- ames[, -which(names(ames) == "Functional")]
+ames <- ames[, -which(names(ames) == "Fence")]
+
+#Exterior_1st and 2nd have same distribution , hence removing 1
+ames <- ames[, -which(names(ames) == "Exterior_2nd")]
+
+#similarly removing basemest fin type 2
+ames <- ames[, -which(names(ames) == "BsmtFin_Type_2")]
+
+#Dropping latitude and logitude as we have neighbourhoods 
+ames <- ames[, -which(names(ames) == "Latitude")]
+ames <- ames[, -which(names(ames) == "Longitude")]
+
+#Dropping Roof_Matl as the different groups are not significant
+ames <- ames[, -which(names(ames) == "Roof_Matl")] 
+
+
+
+```
+
+```{r}
+#graphs wrt numerical variable 
+continuous_vars <- ames %>%
+  #select(-Sale_Price) %>%
+  keep(is.numeric) %>%
+  names()
+
+
+for (var in continuous_vars) {
+  # Create a scatterplot
+  plot <- ggplot(ames, aes_string(x = var, y = "Sale_Price")) +
+    geom_point() +
+    labs(x = var, y = "Sale Price")
+  
+  # Print the scatterplot
+  print(plot)
+}
+
+```
+
+```{r}
+#Plot correlation graph
+library(dplyr)
+library(reshape2)
+ames_numeric <- ames %>%
+  dplyr::select_if(is.numeric)  # Select only numeric variables
+
+ames_categorical <- ames %>%
+  dplyr::select_if(is.factor)   # Select only categorical variables
+
+ames_dummies <- model.matrix(~ . - 1, data = ames_categorical)  # Create dummy variables
+
+ames_combined <- cbind(ames_numeric, ames_dummies)  # Combine numeric and dummy variables
+
+correlation_matrix <- cor(ames_combined, use = "pairwise.complete.obs")
+
+melted_df <- melt(correlation_matrix)
+melted_df <- melted_df[melted_df$value != 'NA',]
+
+library(ggplot2)
+
+ggplot(data = melted_df, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "blue", high = "red", midpoint = 0) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid = element_blank(),
+        legend.position = "none") +
+  coord_fixed()
+
+
+```
+
+```{r}
+#divide data set into test and train 
+library(caTools)
+ames.train <- sample.split(Y = ames$Sale_Price, SplitRatio = 0.7)
+ames.trainset <- subset(ames, ames.train == T)
+ames.testset <- subset(ames, ames.train == F)
+```
+
+```{r}
+#Sample Model creation 
+#First we create a liner regression model which considers all variables and identify variables with highest p value among those 
+
+Regression.m1 <- lm(Sale_Price ~. , data = ames.trainset)
+summary(Regression.m1)
+```
+
+```{r}
+#Area model performance
+regression.m1.predictions <- predict(Regression.m1, newdata = ames.testset)
+
+regression.m1.mse <- mean((regression.m1.predictions - ames.testset$Sale_Price)^2)# Mean Squared Error (MSE)
+
+regression.m1.rmse <- sqrt(mean((regression.m1.predictions - ames.testset$Sale_Price)^2))# Root Mean Squared Error (RMSE)
+
+regression.m1.mae <- mean(abs(regression.m1.predictions - ames.testset$Sale_Price))# Mean Absolute Error (MAE)
+
+regression.m1.r_squared <- cor(regression.m1.predictions, ames.testset$Sale_Price)^2# R-squared (R2) coefficient
+
+library(caret)
+library(Metrics)
+
+num_predictors <- length(coefficients(Regression.m1)) - 1 
+num_observations <- length(ames.testset$Sale_Price)
+
+postResample(regression.m1.predictions, ames.testset$Sale_Price)
+
+regression.m1.adj_rsquared <- 1 - ((1 - 0.8992415) * (num_observations - 1) / (num_observations - num_predictors - 1))
+
+# Pvalue analysis 
+p_values_base <- summary(Regression.m1)$coefficients[, 4][-1]  # Exclude intercept
+log_p_values_base <- -log10(p_values_base)
+
+# Order by decreasing -log10(p-value) and select top 25
+top_25 <- head(sort(log_p_values_base, decreasing = TRUE), 25)
+top_25_names <- names(top_25)
+
+# Filter -log10(p-values) for top 25 variables
+log_p_values_top_25 <- log_p_values_base[top_25_names]
+
+# Create a dataframe for plotting
+plot_data <- data.frame(variable = top_25_names, log_p_value = log_p_values_top_25)
+
+# Plot
+ggplot(plot_data, aes(x = reorder(variable, -log_p_value), y = log_p_value)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+  labs(title = "Top 25 Variables by Statistical Importance",
+       x = "", y = "-log10(p-value)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.title.x = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+
+```
+
+```{r}
+#Area parameters are highly linear with sale_price, hence creating one model using only those 
+Regression.m2 <- lm(Sale_Price ~ Wood_Deck_SF + Total_Bsmt_SF + Second_Flr_SF + Screen_Porch +Pool_QC + Open_Porch_SF +Mas_Vnr_Area + Lot_Frontage + Lot_Area + Gr_Liv_Area +Enclosed_Porch +Bsmt_Unf_SF, data = ames.trainset)
+summary(Regression.m2)
+#Almost all variables are significant in the calculation , even though the correlation between all the variables and sale_price is positive , we see negative coefficient for some, showing that in presence of other variables these variables contribute negatively. And also reason being most houses with enclosed porch have lower sales prices than others.
+
+```
+
+```{r}
+#Area model performance
+regression.m2.predictions <- predict(Regression.m2, newdata = ames.testset)
+
+regression.m2.mse <- mean((regression.m2.predictions - ames.testset$Sale_Price)^2)# Mean Squared Error (MSE)
+
+regression.m2.rmse <- sqrt(mean((regression.m2.predictions - ames.testset$Sale_Price)^2))# Root Mean Squared Error (RMSE)
+
+regression.m2.mae <- mean(abs(regression.m2.predictions - ames.testset$Sale_Price))# Mean Absolute Error (MAE)
+
+regression.m2.r_squared <- cor(regression.m2.predictions, ames.testset$Sale_Price)^2# R-squared (R2) coefficient
+
+num_predictors <- length(coefficients(Regression.m2)) - 1 
+num_observations <- length(ames.testset$Sale_Price)
+
+postResample(regression.m2.predictions, ames.testset$Sale_Price)
+
+regression.m2.adj_rsquared <- 1 - ((1 - 0.7186361) * (num_observations - 1) / (num_observations - num_predictors - 1))
+```
+
+```{r}
+#we now use leaps library to perform Backward selection 
+library ( leaps )
+
+
+predict.regsubsets = function (object , newdata ,id ,...) {
+ form=as.formula ( object$call [[2]])
+ mat = model.matrix (form , newdata )
+ coefi =coef(object ,id=id)
+ xvars =names (coefi )
+ mat [, xvars ]%*% coefi
+ }
+
+ Regression.m3.bwd= regsubsets(Sale_Price ~ ., data= ames.trainset, nvmax =19 ,method ="backward")
+ 
+ summary(Regression.m3.bwd)
+ 
+summary(Regression.m3.bwd)$rsq
+
+par ( mfrow =c(2 ,2) )
+plot(summary(Regression.m3.bwd)$rss , xlab =" Number of Variables ", ylab =" RSS ",type ="l")
+plot(summary(Regression.m3.bwd)$adjr2 ,xlab =" Number of Variables ",ylab =" Adjusted RSq ", type ="l")
+
+which.max (summary(Regression.m3.bwd)$adjr2)
+
+points(20, summary(Regression.m3.bwd)$adjr2 [20] , col =" red ", cex =2, pch =20)
+```
+
+```{r}
+par ( mfrow =c(2 ,2) )
+plot(summary(Regression.m3.bwd)$rss , xlab =" Number of Variables ", ylab =" Cp",type="l")
+which.min (summary(Regression.m3.bwd)$cp )
+
+points (which.min (summary(Regression.m3.bwd)$cp ), summary(Regression.m3.bwd)$cp [which.min (summary(Regression.m3.bwd)$cp )] , col =" red ", cex =2, pch =20)
+which.min (summary(Regression.m3.bwd)$bic )
+
+plot(summary(Regression.m3.bwd)$bic , xlab =" Number of Variables ", ylab =" BIC ", type="l")
+points (which.min (summary(Regression.m3.bwd)$bic ),summary(Regression.m3.bwd)$bic [which.min (summary(Regression.m3.bwd)$bic )], col =" red ",cex =2, pch =20)
+
+```
+
+```{r}
+names(summary(Regression.m3.bwd))
+
+as.data.frame(coef(Regression.m3.bwd,20))
+```
+
+```{r}
+# we use BIC to remove insignificant variables 
+
+library(MASS)
+
+Regression.m4 <- stepAIC(Regression.m1, direction = "backward", k=log(834), trace = TRUE)
+Regression.m4.bic <- eval(Regression.m4$call)
+summary(Regression.m4)
+```
+
+```{r}
+#BIC model performance
+regression.m4.predictions <- predict(Regression.m4, newdata = ames.testset)
+
+regression.m4.mse <- mean((regression.m4.predictions - ames.testset$Sale_Price)^2)# Mean Squared Error (MSE)
+
+regression.m4.rmse <- sqrt(mean((regression.m4.predictions - ames.testset$Sale_Price)^2))# Root Mean Squared Error (RMSE)
+
+regression.m4.mae <- mean(abs(regression.m4.predictions - ames.testset$Sale_Price))# Mean Absolute Error (MAE)
+
+regression.m4.r_squared <- cor(regression.m4.predictions, ames.testset$Sale_Price)^2# R-squared (R2) coefficient
+
+num_predictors <- length(coefficients(Regression.m4)) - 1 
+num_observations <- length(ames.testset$Sale_Price)
+
+postResample(regression.m4.predictions, ames.testset$Sale_Price)
+
+regression.m4.adj_rsquared <- 1 - ((1 - 0.8973337) * (num_observations - 1) / (num_observations - num_predictors - 1))
+
+#Coefficient analysis 
+
+bic_coefficients <- coef(Regression.m4)
+
+variable_names_bic <- rownames(as.data.frame(bic_coefficients))[-1]  # Exclude intercept term
+
+length(variable_names_bic)
+bic_coefficients <- as.numeric(bic_coefficients[-1])
+variable_importance_bic <- abs(bic_coefficients)
+variable_importance_df_bic <- data.frame(Variable = variable_names_bic, Importance = variable_importance_bic)
+variable_importance_df_bic <- variable_importance_df_bic[order(-variable_importance_df_bic$Importance), ]
+print(variable_importance_df_bic)
+
+
+ggplot(variable_importance_df_bic[1:20,], aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variable", y = "Coefficient") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+# Pvalue analysis 
+p_values_bic <- summary(Regression.m4)$coefficients[, 4][-1]  # Exclude intercept
+log_p_values_bic <- -log10(p_values_bic)
+
+top_25 <- head(sort(p_values_bic, decreasing = TRUE), 25)
+top_25_names <- names(top_25)
+
+# Filter -log10(p-values) for top 25 variables
+log_p_values_top_25 <- log_p_values_bic[top_25_names]
+
+# Create a dataframe for plotting
+plot_data <- data.frame(variable = top_25_names, log_p_value = log_p_values_top_25)
+
+# Plot
+ggplot(plot_data, aes(x = reorder(variable, -log_p_value), y = log_p_value)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+  labs(title = "Top 25 Variables by Statistical Importance",
+       x = "", y = "-log10(p-value)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5),
+        axis.title.x = element_blank(),
+        plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+# Applying regularization methods 
+library(glmnet)
+
+x_train = model.matrix(Sale_Price ~.,ames.trainset)[,-1]
+y_train = ames.trainset$Sale_Price
+
+x_test = model.matrix(Sale_Price ~.,ames.testset)[,-1]
+y_test = ames.testset$Sale_Price
+
+# Ridge regression
+cv.out =cv.glmnet (x_train,y_train, alpha =0)
+plot(cv.out )
+```
+
+```{r}
+bestlam =cv.out$lambda.min
+bestlam
+
+Regression.m5 =glmnet (x_train,y_train, alpha =0, lambda = bestlam)
+
+Regression.m5.pred= predict (Regression.m5 ,s=bestlam , newx=x_test)
+
+#Ridge model performance
+regression.m5.predictions <- predict(Regression.m5,s=bestlam , newx = x_test)
+
+
+regression.m5.mse <- mean((regression.m5.predictions -y_test)^2)# Mean Squared Error (MSE)
+
+
+regression.m5.rmse <- sqrt(mean((regression.m5.predictions - y_test)^2))# Root Mean Squared Error (RMSE)
+
+regression.m5.mae <- mean(abs(regression.m5.predictions - y_test))# Mean Absolute Error (MAE)
+
+regression.m5.r_squared <- cor(regression.m5.predictions, y_test)^2# R-squared (R2) coefficient
+
+num_predictors <- length(coefficients(Regression.m5)) - 1 
+num_observations <- length(ames.testset$Sale_Price)
+
+postResample(regression.m5.predictions, ames.testset$Sale_Price)
+
+regression.m5.adj_rsquared <- 1 - ((1 - regression.m5.r_squared) * (num_observations - 1) / (num_observations - num_predictors - 1))
+
+```
+
+```{r}
+# Lasso regression
+cv.out.lasso =cv.glmnet (x_train,y_train, alpha =1)
+plot(cv.out.lasso )
+```
+
+```{r}
+
+bestlam.lasso =cv.out.lasso$lambda.min
+bestlam.lasso
+
+
+Regression.m6 =glmnet (x_train,y_train, alpha =1, lambda = bestlam.lasso)
+plot(coef(Regression.m6))
+
+
+Regression.m6.pred= predict (Regression.m6 ,s=bestlam.lasso , newx=x_test)
+
+regression.m6.mse <- mean((Regression.m6.pred -y_test)^2)# Mean Squared Error (MSE)
+
+
+regression.m6.rmse <- sqrt(mean((Regression.m6.pred - y_test)^2))# Root Mean Squared Error (RMSE)
+
+regression.m6.mae <- mean(abs(Regression.m6.pred - y_test))# Mean Absolute Error (MAE)
+
+regression.m6.r_squared <- cor(Regression.m6.pred, y_test)^2# R-squared (R2) coefficient
+
+num_predictors <- length(coefficients(Regression.m6)) - 1 
+num_observations <- length(ames.testset$Sale_Price)
+
+postResample(Regression.m6.pred, ames.testset$Sale_Price)
+
+regression.m6.adj_rsquared <- 1 - ((1 - regression.m6.r_squared) * (num_observations - 1) / (num_observations - num_predictors - 1))
+
+
+lasso_coefficients <- coef(Regression.m6, s=bestlam.lasso)
+
+variable_names <- rownames(lasso_coefficients)[-1]  # Exclude intercept term
+
+coefficients <- as.numeric(lasso_coefficients[-1])
+variable_importance <- abs(coefficients)
+variable_importance_df <- data.frame(Variable = variable_names, Importance = variable_importance)
+variable_importance_df <- variable_importance_df[order(-variable_importance_df$Importance), ]
+print(variable_importance_df)
+
+barplot(variable_importance, main = "Variable Importance - Lasso - CV ", xlab = "Predictor Variables", ylab = "Coefficient Magnitude")
+
+ggplot(variable_importance_df[1:20,], aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Variable", y = "Importance") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+# Lasso and ridge regressions are giving great results compared to others, but check if lasso performs better after removing some irrelevant columns 
+
+```
+
+```{r}
+#Model 6 residual analysis 
+plot(Regression.m6.pred ~ ames.testset$Sale_Price,main = "Lasso - CV",xlab = "Predicted Sale Price", ylab = "Actual Sale Price",
+      )
+abline(a = 0, b = 1, col = "red")
+```
+
+```{r}
+qqnorm(ames.testset$Sale_Price - Regression.m6.pred)
+qqline(ames.testset$Sale_Price - Regression.m6.pred)
+
+
+```
+
+```{r}
+
+```
+
+```{r}
+# Applying lasso on the formula obtained from BIC model and few other variables which makes sense 
+
+formula <- 
+  Sale_Price ~ Bedroom_AbvGr + Bldg_Type + Bsmt_Exposure + 
+    Bsmt_Qual + Bsmt_Unf_SF + BsmtFin_Type_1 + Central_Air + 
+    Condition_2 + Exter_Qual  + Garage_Cars + 
+    Garage_Cond + Gr_Liv_Area + Kitchen_AbvGr + Kitchen_Qual + 
+    Lot_Area + Mas_Vnr_Area + Mas_Vnr_Type + Neighborhood + Overall_Cond + Overall_Qual + Paved_Drive + Pool_Area + Pool_QC + Screen_Porch + 
+    Street + Total_Bsmt_SF + Wood_Deck_SF + Year_Built + Year_Remod_Add + Utilities +   Second_Flr_SF +  Open_Porch_SF + Lot_Frontage  + Enclosed_Porch
+
+x_train_lasso2 <- model.matrix(formula, data = ames.trainset)
+y_train_lasso2 <- ames.trainset$Sale_Price
+
+x_test_lasso2 <- model.matrix(formula, data = ames.testset)
+y_test_lasso2 <- ames.testset$Sale_Price
+
+cv.out.lasso2 =cv.glmnet (x_train_lasso2,y_train_lasso2, alpha =1)
+plot(cv.out.lasso2 )
+
+
+
+```
+
+```{r}
+bestlam.lasso2 =cv.out.lasso2$lambda.min
+bestlam.lasso2
+
+Regression.m7 =glmnet (x_train_lasso2,y_train_lasso2, alpha =1, lambda = bestlam.lasso2)
+plot(coef(Regression.m7))
+
+
+Regression.m7.pred= predict (Regression.m7 ,s=bestlam.lasso2 , newx=x_test_lasso2)
+
+regression.m7.mse <- mean((Regression.m7.pred -y_test_lasso2)^2)# Mean Squared Error (MSE)
+
+
+regression.m7.rmse <- sqrt(mean((Regression.m7.pred - y_test_lasso2)^2))# Root Mean Squared Error (RMSE)
+
+regression.m7.mae <- mean(abs(Regression.m7.pred - y_test_lasso2))# Mean Absolute Error (MAE)
+
+regression.m7.r_squared <- cor(Regression.m7.pred, y_test_lasso2)^2# R-squared (R2) coefficient
+
+num_predictors <- length(coefficients(Regression.m7)) - 1 
+num_observations <- length(ames.testset$Sale_Price)
+
+postResample(Regression.m7.pred, ames.testset$Sale_Price)
+
+regression.m7.adj_rsquared <- 1 - ((1 - regression.m7.r_squared) * (num_observations - 1) / (num_observations - num_predictors - 1))
+
+
+```
+
+```{r}
+# One final model check with random forest 
+
+library(randomForest)
+
+rf_model <- randomForest(Sale_Price ~., data = ames.trainset)
+
+summary(rf_model)
+
+```
+
+```{r}
+rf_model.predictions <- predict(rf_model, newdata = ames.testset)
+rf_model.mse <- mean((rf_model.predictions -ames.testset$Sale_Price)^2)# Mean Squared Error (MSE)
+rf_model.rmse <- sqrt(mean((rf_model.predictions -ames.testset$Sale_Price)^2))# Mean Squared Error (MSE)
+
+rf_model.r_squared <- cor(rf_model.predictions, ames.testset$Sale_Price)^2# 
+
+
+print(rf_model)
+
+```
+
+```{r}
+#Random forest with CV and grid
+
+library(randomForest)
+library(caret)
+
+# Define the parameter grid
+mtry <- c(25:35) #mtry 10,20,30 are tried first 
+
+param_grid <- expand.grid(
+  .mtry = mtry          # Number of variables to sample at each split
+)
+
+# Define the control parameters for cross-validation
+ctrl <- trainControl(
+  method = "cv",               # Cross-validation method
+  number = 5,                  # Number of folds
+  verboseIter = TRUE           # Print progress
+)
+
+modellist <- list()
+
+# Perform grid search with cross-validation
+#for (ntree in c(500,600)){
+rf_grid <- train(
+  Sale_Price ~ .,              # Formula
+  data = ames.trainset,        # Training data
+  method = "rf",               # Random Forest method
+  trControl = ctrl,            # Cross-validation control
+  tuneGrid = param_grid,        # Parameter grid
+  ntree = 500
+)
+#key <- toString(ntree)
+#modellist[[key]] <- rf_grid
+#}
+
+# ntree 200.300.500.600 were tested first , 500 is picked as optimum
+
+#rf_grid.results <- resamples(modellist)
+#summary(rf_grid.results)
+
+# Print the best model
+print(rf_grid)
+
+
+# Make predictions on the test set
+rf_grid.predictions <- predict(rf_grid, newdata = ames.testset)
+
+# Calculate RMSE
+rf_grid.rmse <- sqrt(mean((rf_grid.predictions - ames.testset$Sale_Price)^2))
+
+rf_grid.r_squared <-  cor(rf_grid.predictions, ames.testset$Sale_Price)^2
+
+#Iteration 1- mtry = 30 , tree = 500 - rmse = 18187 , rsquare = 0.91 
+# iteration 2 - mtry = 36, tree = 500 - rmse = 17956 , rsquare 0.914
+
+print(paste("RMSE:", rf_grid.rmse))
+
+```
+
+```{r}
+# #creating model on whole set with best features 
+# regression.m8 <- randomForest(Sale_Price ~ ., data = ames.trainset,
+#                                mtry = rf_grid$bestTune$mtry,
+#                                ntree = 500
+# )
+# 
+# # Make predictions on the test set
+# regression.m8.predictions <- predict(regression.m8, newdata = ames.testset)
+# 
+# # Calculate RMSE
+# regression.m8.rmse <- sqrt(mean((regression.m8.predictions - ames.testset$Sale_Price)^2))
+# 
+# regression.m8.r_squared <-  cor(regression.m8.predictions, ames.testset$Sale_Price)^2
+
+
+
+```
+
+```{r}
+
+rf_grid_imp <- importance(rf_grid$finalModel)
+
+rf_grid_imp <- as.data.frame(cbind(row.names(rf_grid_imp), rf_grid_imp))
+
+colnames(rf_grid_imp) <- c("Variable", "IncNodePurity")
+
+rf_grid_imp[order(rf_grid_imp$IncNodePurity, decreasing = TRUE),]
+```
+
+```{r}
+rf_grid$finalModel
+
+```
+
+```{r}
+# Model residual check for BIC  - not for lasso as its a regularized regression
+plot(Regression.m4$residuals ~ ames.trainset$Overall_Qual)
+```
+
+```{r}
+hist(Regression.m4$residuals)
+```
+
+```{r}
+qqnorm(Regression.m4$residuals)
+qqline(Regression.m4$residuals)
+```
+
+```{r}
+plot(Regression.m4$residuals ~ Regression.m4$fitted.values)
+```
+
+```{r}
+plot(Regression.m4$residuals)
+```
+
+```{r}
+#comparing rf grid predictions with original values 
+plot(rf_grid.predictions ~ ames.testset$Sale_Price,main = "Random Forest - CV",xlab = "Predicted Sale Price", ylab = "Actual Sale Price",
+      )
+abline(a = 0, b = 1, col = "red")
+```
+
+```{r}
+
+```
+
+```{r}
+#comparing rf grid residuals with original sale price 
+plot(ames.testset$Sale_Price - rf_grid.predictions ~ ames.testset$Sale_Price)
+```
+
+```{r}
+# List of models
+metrics_df_Reg <- data.frame(
+  Model = c("Base Linear Regression", "LR - selected columns", "LR-BIC", "LR - Ridge -5CV", "LR- Lasso - 5CV", "LR - selected columns - Lasso - 5CV", "Random Forest", "Random Forest - 5CV"),
+  
+  R_Squared = c(regression.m1.r_squared, regression.m2.r_squared, regression.m4.r_squared, regression.m5.r_squared, regression.m6.r_squared, regression.m7.r_squared, rf_model.r_squared, rf_grid.r_squared),
+  
+  Adjusted_R_Squared = c(regression.m1.adj_rsquared, regression.m2.adj_rsquared, regression.m4.adj_rsquared, regression.m5.adj_rsquared, regression.m6.adj_rsquared, regression.m7.adj_rsquared, NA, NA), # Adjusted R squared only for some models
+  
+  RMSE = c(regression.m1.rmse, regression.m2.rmse, regression.m4.rmse, regression.m5.rmse, regression.m6.rmse, regression.m7.rmse, rf_model.rmse, rf_grid.rmse)
+)
+
+options(digits = 3)
+options(width.cutoff = 40)
+
+# Print dataframe
+print(metrics_df_Reg[metrics_df_Reg$Model %in% c("Base Linear Regression", "LR - selected columns", "LR-BIC", "LR - Ridge -5CV", "LR- Lasso - 5CV", "LR - selected columns - Lasso - 5CV"), ])
+
+print(metrics_df_Reg[!metrics_df_Reg$Model %in% c("Base Linear Regression", "LR - selected columns", "LR-BIC", "LR - Ridge -5CV", "LR- Lasso - 5CV", "LR - selected columns - Lasso - 5CV"), -3])
+```
